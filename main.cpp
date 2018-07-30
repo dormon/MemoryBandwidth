@@ -23,13 +23,14 @@ shared_ptr<Program> getProgram(size_t workGroupSize,size_t floatsPerThread = 1,s
   stringstream ss;
   ss << "#version 450" << endl;
   ss << "#line " << __LINE__ << endl;
-  ss << "layout(local_size_x=" << workGroupSize << ")in;" << endl;
-  ss << "#define FLOATS_PER_THREAD " << floatsPerThread << endl;
+  ss << "#define FLOATS_PER_THREAD    " << floatsPerThread    << endl;
   ss << "#define REGISTERS_PER_THREAD " << registersPerThread << endl;
-  ss << "#define FLOAT_CHUNKS (FLOATS_PER_THREAD / REGISTERS_PER_THREAD)" << endl;
-  ss << "#define WORKGROUP_SIZE " << workGroupSize << endl;
+  ss << "#define WORKGROUP_SIZE       " << workGroupSize      << endl;
   ss << R".(
 
+  #define FLOAT_CHUNKS (FLOATS_PER_THREAD / REGISTERS_PER_THREAD)
+
+  layout(local_size_x=WORKGROUP_SIZE)in;
   layout(binding=0,std430)buffer Data{float data[];};
 
   void main(){
@@ -43,20 +44,20 @@ shared_ptr<Program> getProgram(size_t workGroupSize,size_t floatsPerThread = 1,s
 
     #if REGISTERS_PER_THREAD != 0
 
-    float registers[REGISTERS_PER_THREAD];
-    for(uint r=0;r<REGISTERS_PER_THREAD;++r)
-      registers[r] = 0.f;
-
-    for(uint f=0;f<FLOAT_CHUNKS;++f)
+      float registers[REGISTERS_PER_THREAD];
       for(uint r=0;r<REGISTERS_PER_THREAD;++r)
-        registers[r] += data[lid + (f*REGISTERS_PER_THREAD+r)*wgs + workGroupOffset];
-    for(uint r=0;r<REGISTERS_PER_THREAD;++r)
-      accumulator += registers[r];
+        registers[r] = 0.f;
+
+      for(uint f=0;f<FLOAT_CHUNKS;++f)
+        for(uint r=0;r<REGISTERS_PER_THREAD;++r)
+          registers[r] += data[lid + (f*REGISTERS_PER_THREAD+r)*wgs + workGroupOffset];
+      for(uint r=0;r<REGISTERS_PER_THREAD;++r)
+        accumulator += registers[r];
 
     #else
 
-    for(uint f=0;f<FLOATS_PER_THREAD;++f)
-      accumulator += data[lid + f*wgs + workGroupOffset];
+      for(uint f=0;f<FLOATS_PER_THREAD;++f)
+        accumulator += data[lid + f*wgs + workGroupOffset];
 
     #endif
 
