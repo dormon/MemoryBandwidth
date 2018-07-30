@@ -8,7 +8,7 @@
 using namespace ge::gl;
 using namespace std;
 
-shared_ptr<Program> getProgram(size_t workGroupSize,size_t floatsPerThread = 1,size_t registersPerThread = 0){
+shared_ptr<Program> getReadProgram(size_t workGroupSize,size_t floatsPerThread = 1,size_t registersPerThread = 0){
   static size_t wgs = 0;
   static size_t fpt = 0;
   static size_t rpt = 0;
@@ -69,6 +69,42 @@ shared_ptr<Program> getProgram(size_t workGroupSize,size_t floatsPerThread = 1,s
   return program;
 }
 
+shared_ptr<Program> getWriteProgram(size_t workGroupSize,size_t floatsPerThread){
+  static size_t wgs = 0;
+  static size_t fpt = 0;
+  static std::shared_ptr<Program>program = nullptr;
+  if(wgs == workGroupSize && fpt == floatsPerThread)
+    return program;
+  std::cerr << "need to recompile program" << std::endl;
+  wgs = workGroupSize;
+  fpt = floatsPerThread;
+
+  stringstream ss;
+  ss << "#version 450" << endl;
+  ss << "#line " << __LINE__ << endl;
+  ss << "#define FLOATS_PER_THREAD    " << floatsPerThread    << endl;
+  ss << "#define WORKGROUP_SIZE       " << workGroupSize      << endl;
+  ss << R".(
+
+  layout(local_size_x=WORKGROUP_SIZE)in;
+  layout(binding=0,std430)buffer Data{float data[];};
+
+  void main(){
+    uint lid  = gl_LocalInvocationID .x;
+    uint gid  = gl_GlobalInvocationID.x;
+    uint wgs  = gl_WorkGroupSize     .x;
+    uint wid  = gl_WorkGroupID       .x;
+    uint nwgs = gl_NumWorkGroups     .x;
+    const uint workGroupOffset = wid*FLOATS_PER_THREAD*WORKGROUP_SIZE;
+
+    for(uint f=0;f<FLOATS_PER_THREAD;++f)
+      data[lid + f*wgs + workGroupOffset] = lid + f*wgs + workGroupOffset;
+  }
+  ).";
+  program = make_shared<Program>(make_shared<Shader>(GL_COMPUTE_SHADER,ss.str()));
+  return program;
+}
+
 shared_ptr<Buffer> getBuffer(size_t workGroupSize,size_t nofWorkGroups,size_t floatsPerThread){
   static size_t wgs = 0;
   static size_t nw  = 0;
@@ -103,22 +139,16 @@ int main(int argc,char*argv[]){
   uint64_t const nanoSecondsInSecond = 1e9;
   uint64_t const gigabyte = 1024*1024*1024;
 
-  size_t nofMX              = 28  ;
-  size_t coresPerMX         = 128 ;
-  size_t warp               = 32  ;
-  size_t workGroupSize      = 128 ;
-  size_t nofWorkGroups      = 28  ;
-  size_t floatsPerThread    = 1024;
-  size_t registersPerThread = 0   ;
+  bool   useReadProgram     = false;
+  size_t workGroupSize      = 128  ;
+  size_t nofWorkGroups      = 28   ;
+  size_t floatsPerThread    = 1024 ;
+  size_t registersPerThread = 0    ;
 
   size_t minWorkGroupSize      = 1        ;
   size_t maxWorkGroupSize      = 1024     ;
   size_t minFloatsPerThread    = 1        ;
   size_t maxFloatsPerThread    = 100000   ;
-  size_t minNofMX              = 1        ;
-  size_t maxNofMX              = 256      ;
-  size_t minCorePerMX          = 32       ;
-  size_t maxCorePerMX          = 1024     ;
   size_t minNofWorkGroups      = 1        ;
   size_t maxNofWorkGroups      = 1024*1024;
   size_t minRegistersPerThread = 0        ;
@@ -132,7 +162,11 @@ int main(int argc,char*argv[]){
     glClearColor(1.f,0.1f,0.1f,1.f);
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
     imgui->newFrame(window->getWindow());
-    auto program = getProgram(workGroupSize,floatsPerThread,registersPerThread);
+    shared_ptr<Program>program;
+    if(useReadProgram)
+      program = getReadProgram(workGroupSize,floatsPerThread,registersPerThread);
+    else
+      program = getWriteProgram(workGroupSize,floatsPerThread);
     auto buffer  = getBuffer(workGroupSize,nofWorkGroups,floatsPerThread);
     buffer->clear(GL_R32F,GL_RED,GL_FLOAT);
     program->use();
@@ -140,25 +174,26 @@ int main(int argc,char*argv[]){
     glFinish();
     glBeginQuery(GL_TIME_ELAPSED, query);
     program->dispatch(nofWorkGroups);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
     glFinish();
     uint64_t timeInNanoseconds;
     glEndQuery(GL_TIME_ELAPSED);
     glGetQueryObjectui64v(query,GL_QUERY_RESULT,&timeInNanoseconds);
     time = static_cast<double>(timeInNanoseconds) / static_cast<double>(nanoSecondsInSecond);
-    auto const bufferSize = nofMX * workGroupSize * floatsPerThread * sizeof(float);
+    auto const bufferSize = nofWorkGroups * workGroupSize * floatsPerThread * sizeof(float);
     auto const bandwidth = bufferSize / time;
     bandwidthInGigabytes = bandwidth / static_cast<double>(gigabyte);
 
     ImGui::Begin("vars");
+    ImGui::Checkbox("use read program",&useReadProgram);
     ImGui::DragScalar("floatsPerThread"     ,ImGuiDataType_U64,&floatsPerThread   ,1,&minFloatsPerThread   ,&maxFloatsPerThread   );
-    ImGui::DragScalar("number of SMX"       ,ImGuiDataType_U64,&nofMX             ,1,&minNofMX             ,&maxNofMX             );
-    ImGui::DragScalar("cores per SMX"       ,ImGuiDataType_U64,&coresPerMX        ,1,&minCorePerMX         ,&maxCorePerMX         );
     ImGui::DragScalar("workGroupSize"       ,ImGuiDataType_U64,&workGroupSize     ,1,&minWorkGroupSize     ,&maxWorkGroupSize     );
     ImGui::DragScalar("number of workgroups",ImGuiDataType_U64,&nofWorkGroups     ,1,&minNofWorkGroups     ,&maxNofWorkGroups     );
-    ImGui::DragScalar("registers per thread",ImGuiDataType_U64,&registersPerThread,1,&minRegistersPerThread,&maxRegistersPerThread);
-    ImGui::Text("Buffer Size: %f [GB]",static_cast<uint32_t>(workGroupSize * nofWorkGroups * floatsPerThread * sizeof(float))/static_cast<float>(gigabyte));
-    ImGui::Text("Time: %lf [s]",time);
-    ImGui::Text("bandwidth: %lf [GB/s]",bandwidthInGigabytes);
+    if(useReadProgram)
+      ImGui::DragScalar("registers per thread",ImGuiDataType_U64,&registersPerThread,1,&minRegistersPerThread,&maxRegistersPerThread);
+    ImGui::Text("buffer Size : %f [GB]"   ,static_cast<float>(workGroupSize * nofWorkGroups * floatsPerThread * sizeof(float))/static_cast<float>(gigabyte));
+    ImGui::Text("time        : %lf [s]"   ,time);
+    ImGui::Text("bandwidth   : %lf [GB/s]",bandwidthInGigabytes);
     ImGui::End();
     imgui->render(window->getWindow(), window->getContext("rendering"));
     window->swap();
