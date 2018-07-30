@@ -26,7 +26,7 @@ shared_ptr<Program> getProgram(size_t workGroupSize,size_t floatsPerThread = 1,s
   ss << "layout(local_size_x=" << workGroupSize << ")in;" << endl;
   ss << "#define FLOATS_PER_THREAD " << floatsPerThread << endl;
   ss << "#define REGISTERS_PER_THREAD " << registersPerThread << endl;
-  ss << "#define REGISTER_CHUNKS (FLOATS_PER_THREAD / REGISTERS_PER_THREAD)" << endl;
+  ss << "#define FLOAT_CHUNKS (FLOATS_PER_THREAD / REGISTERS_PER_THREAD)" << endl;
   ss << "#define WORKGROUP_SIZE " << workGroupSize << endl;
   ss << R".(
 
@@ -47,7 +47,7 @@ shared_ptr<Program> getProgram(size_t workGroupSize,size_t floatsPerThread = 1,s
     for(uint r=0;r<REGISTERS_PER_THREAD;++r)
       registers[r] = 0.f;
 
-    for(uint f=0;f<REGISTER_CHUNKS;++f)
+    for(uint f=0;f<FLOAT_CHUNKS;++f)
       for(uint r=0;r<REGISTERS_PER_THREAD;++r)
         registers[r] += data[lid + (f*REGISTERS_PER_THREAD+r)*wgs + workGroupOffset];
     for(uint r=0;r<REGISTERS_PER_THREAD;++r)
@@ -147,13 +147,6 @@ int main(int argc,char*argv[]){
     auto const bufferSize = nofMX * workGroupSize * floatsPerThread * sizeof(float);
     auto const bandwidth = bufferSize / time;
     bandwidthInGigabytes = bandwidth / static_cast<double>(gigabyte);
-
-#if 0
-    auto d = (float*)buffer->map();
-    for(size_t i=0;i<10;++i)
-      std::cout << d[i] << std::endl;
-    buffer->unmap();
-#endif
 
     ImGui::Begin("vars");
     ImGui::DragScalar("floatsPerThread"     ,ImGuiDataType_U64,&floatsPerThread   ,1,&minFloatsPerThread   ,&maxFloatsPerThread   );
