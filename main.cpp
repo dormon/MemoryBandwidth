@@ -139,10 +139,7 @@ int main(int argc,char*argv[]){
   mainLoop->setEventHandler([&](SDL_Event const&event){
     return imgui->processEvent(&event);
   });
-
-  GLuint query;
-  glCreateQueries(GL_TIME_ELAPSED,1,&query);
-
+  auto qr = make_shared<AsynchronousQuery>(GL_TIME_ELAPSED,GL_QUERY_RESULT,AsynchronousQuery::UINT64);
   uint64_t const nanoSecondsInSecond = 1e9;
   uint64_t const gigabyte = 1024*1024*1024;
 
@@ -179,13 +176,12 @@ int main(int argc,char*argv[]){
     program->use();
     program->bindBuffer("data",buffer);
     glFinish();
-    glBeginQuery(GL_TIME_ELAPSED, query);
+    qr->begin();
     program->dispatch(nofWorkGroups);
     glMemoryBarrier(GL_ALL_BARRIER_BITS);
     glFinish();
-    uint64_t timeInNanoseconds;
-    glEndQuery(GL_TIME_ELAPSED);
-    glGetQueryObjectui64v(query,GL_QUERY_RESULT,&timeInNanoseconds);
+    qr->end();
+    auto timeInNanoseconds = qr->getui64();
     time = static_cast<double>(timeInNanoseconds) / static_cast<double>(nanoSecondsInSecond);
     auto const bufferSize = nofWorkGroups * workGroupSize * floatsPerThread * sizeof(float);
     auto const bandwidth = bufferSize / time;
