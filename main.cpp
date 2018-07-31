@@ -8,21 +8,37 @@
 using namespace ge::gl;
 using namespace std;
 
+template<typename RETURN,typename...ARGS>
+class Barrier{
+  public:
+    using PTR = RETURN(*)(ARGS...);
+    Barrier(PTR const&,RETURN && defRet,ARGS && ... defaults):returnValue(defRet),arguments{defaults...}{}
+    bool notChanged(ARGS const&... args){
+      auto newInputs = std::tuple<ARGS...>(args...);
+      auto same = arguments == newInputs;
+      if(same)return same;
+      arguments = newInputs;
+      return same;
+    }
+    RETURN             returnValue;
+    std::tuple<ARGS...>arguments  ;
+};
+
+template<typename RETURN,typename...ARGS,typename VRET,typename...VARGS>
+Barrier<RETURN,ARGS...>make_Barrier(RETURN(*ptr)(ARGS...),VRET && returnDef,VARGS && ...defaults){
+  return Barrier<RETURN,ARGS...>{ptr,static_cast<RETURN>(returnDef),static_cast<ARGS>(defaults)...};
+}
+
+
 shared_ptr<Program> getReadProgram(size_t workGroupSize,size_t floatsPerThread = 1,size_t registersPerThread = 0){
-  static size_t wgs = 0;
-  static size_t fpt = 0;
-  static size_t rpt = 0;
-  static std::shared_ptr<Program>program = nullptr;
-  if(wgs == workGroupSize && fpt == floatsPerThread && rpt == registersPerThread)
-    return program;
+  static auto barrier = make_Barrier(getReadProgram,nullptr,0,0,0);
+  if(barrier.notChanged(workGroupSize,floatsPerThread,registersPerThread))
+    return barrier.returnValue;
   std::cerr << "need to recompile program" << std::endl;
-  wgs = workGroupSize;
-  fpt = floatsPerThread;
-  rpt = registersPerThread;
 
   stringstream ss;
-  ss << "#version 450" << endl;
-  ss << "#line " << __LINE__ << endl;
+  ss << "#version                     " << 450                << endl;
+  ss << "#line                        " << __LINE__           << endl;
   ss << "#define FLOATS_PER_THREAD    " << floatsPerThread    << endl;
   ss << "#define REGISTERS_PER_THREAD " << registersPerThread << endl;
   ss << "#define WORKGROUP_SIZE       " << workGroupSize      << endl;
@@ -65,25 +81,22 @@ shared_ptr<Program> getReadProgram(size_t workGroupSize,size_t floatsPerThread =
       data[gid] = 0.f;
   }
   ).";
-  program = make_shared<Program>(make_shared<Shader>(GL_COMPUTE_SHADER,ss.str()));
-  return program;
+
+  barrier.returnValue = make_shared<Program>(make_shared<Shader>(GL_COMPUTE_SHADER,ss.str()));
+  return barrier.returnValue;
 }
 
 shared_ptr<Program> getWriteProgram(size_t workGroupSize,size_t floatsPerThread){
-  static size_t wgs = 0;
-  static size_t fpt = 0;
-  static std::shared_ptr<Program>program = nullptr;
-  if(wgs == workGroupSize && fpt == floatsPerThread)
-    return program;
+  static auto barrier = make_Barrier(getWriteProgram,nullptr,0,0);
+  if(barrier.notChanged(workGroupSize,floatsPerThread))
+    return barrier.returnValue;
   std::cerr << "need to recompile program" << std::endl;
-  wgs = workGroupSize;
-  fpt = floatsPerThread;
 
   stringstream ss;
-  ss << "#version 450" << endl;
-  ss << "#line " << __LINE__ << endl;
-  ss << "#define FLOATS_PER_THREAD    " << floatsPerThread    << endl;
-  ss << "#define WORKGROUP_SIZE       " << workGroupSize      << endl;
+  ss << "#version                  " << 450             << endl;
+  ss << "#line                     " << __LINE__        << endl;
+  ss << "#define FLOATS_PER_THREAD " << floatsPerThread << endl;
+  ss << "#define WORKGROUP_SIZE    " << workGroupSize   << endl;
   ss << R".(
 
   layout(local_size_x=WORKGROUP_SIZE)in;
@@ -101,25 +114,19 @@ shared_ptr<Program> getWriteProgram(size_t workGroupSize,size_t floatsPerThread)
       data[lid + f*wgs + workGroupOffset] = lid + f*wgs + workGroupOffset;
   }
   ).";
-  program = make_shared<Program>(make_shared<Shader>(GL_COMPUTE_SHADER,ss.str()));
-  return program;
+  barrier.returnValue = make_shared<Program>(make_shared<Shader>(GL_COMPUTE_SHADER,ss.str()));
+  return barrier.returnValue;
 }
 
 shared_ptr<Buffer> getBuffer(size_t workGroupSize,size_t nofWorkGroups,size_t floatsPerThread){
-  static size_t wgs = 0;
-  static size_t nw  = 0;
-  static size_t fpt = 0;
-  static shared_ptr<Buffer>buffer = nullptr;
-  if(wgs == workGroupSize && nw == nofWorkGroups && fpt == floatsPerThread)
-    return buffer;
+  static auto barrier = make_Barrier(getBuffer,nullptr,0,0,0);
+  if(barrier.notChanged(workGroupSize,nofWorkGroups,floatsPerThread))
+    return barrier.returnValue;
   std::cerr << "need to reallocate buffer" << std::endl;
-  wgs = workGroupSize;
-  nw = nofWorkGroups;
-  fpt = floatsPerThread;
 
   size_t const bufferSize = workGroupSize * nofWorkGroups * floatsPerThread;
-  buffer = make_shared<Buffer>(bufferSize * sizeof(float));
-  return buffer;
+  barrier.returnValue = make_shared<Buffer>(bufferSize * sizeof(float));
+  return barrier.returnValue;
 }
 
 int main(int argc,char*argv[]){
