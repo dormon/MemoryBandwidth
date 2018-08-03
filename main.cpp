@@ -29,7 +29,6 @@ Barrier<RETURN,ARGS...>make_Barrier(RETURN(*ptr)(ARGS...),VRET && returnDef,VARG
   return Barrier<RETURN,ARGS...>{ptr,static_cast<RETURN>(returnDef),static_cast<ARGS>(defaults)...};
 }
 
-
 shared_ptr<Program> getReadProgram(size_t workGroupSize,size_t floatsPerThread = 1,size_t registersPerThread = 0){
   static auto barrier = make_Barrier(getReadProgram,nullptr,0,0,0);
   if(barrier.notChanged(workGroupSize,floatsPerThread,registersPerThread))
